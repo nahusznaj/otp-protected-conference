@@ -8,30 +8,30 @@ app = Flask(__name__)
 app.config.from_object('settings')
 
 client = Client(
-    app.config['TWILIO_ACCOUNT_SID'],
-    app.config['TWILIO_AUTH_TOKEN'])
+   app.config['TWILIO_ACCOUNT_SID'],
+   app.config['TWILIO_AUTH_TOKEN'])
 
 VERIFY_SERVICE_SID = app.config['VERIFY_SERVICE_SID']
 MODERATOR = app.config['MODERATOR']
-
+KNOWN_PARTICIPANTS = app.config['KNOWN_PARTICIPANTS']
 
 def start_verification(caller):
-    # don't send another code if there's already a pending verification
-    try:
-        client.verify \
-            .services(VERIFY_SERVICE_SID) \
-            .verifications(caller) \
-            .fetch()
-    except TwilioRestException as e:
-        print("No pending verifications for {}".format(caller))
+   # don't send another code if there's already a pending verification
+   try:
+       client.verify \
+           .services(VERIFY_SERVICE_SID) \
+           .verifications(caller) \
+           .fetch()
+   except TwilioRestException as e:
+       print("No pending verifications for {}".format(caller))
 
-        # verify the user is not spoofing a phone number
-        # alternative: could look up a participant's email 
-        # and send a code via email: twilio.com/docs/verify/email
-        client.verify \
-            .services(VERIFY_SERVICE_SID) \
-            .verifications \
-            .create(to=caller, channel='sms')
+       # verify the user is not spoofing a phone number
+       # alternative: could look up a participant's email
+       # and send a code via email: twilio.com/docs/verify/email
+       client.verify \
+           .services(VERIFY_SERVICE_SID) \
+           .verifications \
+           .create(to=caller, channel='sms')
 
 
 def check_verification(caller, otp):
@@ -39,15 +39,16 @@ def check_verification(caller, otp):
         .services(VERIFY_SERVICE_SID) \
         .verification_checks \
         .create(to=caller, code=otp)
-    
+  
     return check.status == 'approved'
-
 
 def join_conference(caller, resp):
    with Dial() as dial:
        # If the caller is our MODERATOR, then start the conference when they
        # join and end the conference when they leave
-       if request.values.get('From') == MODERATOR:
+       # if any([x for x in programs if 'new york' in x.lower()] from https://stackoverflow.com/questions/10484261/find-dictionary-items-whose-key-matches-a-substring
+
+       if any([caller[4:] in MODERATOR]):
            dial.conference(
                'My conference',
                start_conference_on_enter=True,
@@ -62,30 +63,33 @@ def join_conference(caller, resp):
 
 @app.route("/voice", methods=['GET', 'POST'])
 def voice():
-    """Respond to incoming phone calls with a menu of options"""
-    # Start our TwiML response
-    resp = VoiceResponse()
-    caller = request.values.get('From')
+   """Respond to incoming phone calls with a menu of options"""
+   # Start our TwiML response
+   resp = VoiceResponse()
+   caller = request.values.get('From')
+   caller = caller[4:]
 
-    # verify the phone number has access to the call
-    name = app.config['KNOWN_PARTICIPANTS'].get(caller)
-    if name is None:
-        resp.say("Sorry, I don't recognize the number you're calling from.")
-        return str(resp)
-    
-    start_verification(caller)
+   # verify the phone number has access to the call
+   from_number = [x for x in KNOWN_PARTICIPANTS if caller in x]
 
-    # Start our <Gather> verb
-    gather = Gather(num_digits=6, action='/gather')
-    gather.say(
-        "Welcome {}. Please enter the 6 digit code sent to your device.".format(
-            name))
-    resp.append(gather)
+   if not from_number:
+       resp.say("Sorry, I don't recognize the number you're calling from.")
+       return str(resp)
 
-    # If the user doesn't select an option, redirect them into a loop
-    resp.redirect('/voice')
+   name = KNOWN_PARTICIPANTS.get(from_number[0])
+   #start_verification(caller)
+       
+   # Start our <Gather> verb
+   gather = Gather(num_digits=6, action='/gather')
+   gather.say(
+       "Welcome {}. Please enter the 6 digit code sent to your device.".format(
+           name))
+   resp.append(gather)
 
-    return str(resp)
+   # If the user doesn't select an option, redirect them into a loop
+   resp.redirect('/voice')
+
+   return str(resp)
 
 
 @app.route('/gather', methods=['GET', 'POST'])
@@ -97,6 +101,7 @@ def gather():
     # If Twilio's request to our app included already gathered digits,
     # process them
     if 'Digits' in request.values:
+        print(request.values['Digits'])
         # Get the one-time password input
         caller = request.values['From']
 
